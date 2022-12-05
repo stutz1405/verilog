@@ -1,0 +1,197 @@
+// Stuti Parmar
+// Making a pipelined comparator in verilog
+
+
+module rff(q, d, clk, enable, reset);
+   output q;
+   input  d, clk, enable, reset;
+   reg    q;
+
+   always @(posedge reset)
+     q<= 1'b0;
+   always @(posedge clk)
+     if (enable) q <= d; 
+endmodule
+
+module rregister(q, d, clk, enable, reset);
+   parameter SIZE = 2;
+   output [SIZE-1:0] q;
+   input [SIZE-1:0]  d;
+   input             clk, enable, reset;
+
+   rff myFF[SIZE-1:0](q, d, clk, enable, reset);
+endmodule // rregister
+            
+module yMux1(z, a, b, c); 
+   output z; 
+   input  a, b, c; 
+   wire   notC, upper, lower; 
+   not my_not(notC, c); 
+   and upperAnd(upper, a, notC); 
+   and lowerAnd(lower, c, b); 
+   or my_or(z, upper, lower); 
+endmodule // yMux1
+
+module yMux(z, a, b, c); 
+   parameter SIZE = 7; 
+   output [SIZE-1:0] z; 
+   input [SIZE-1:0]  a, b; 
+   input             c; 
+   yMux1 mine[SIZE-1:0](z, a, b, c); 
+endmodule // yMux
+
+module yMux4to1(z, a0,a1,a2,a3, c); 
+   parameter SIZE = 2; 
+   output [SIZE-1:0] z; 
+   input [SIZE-1:0]  a0, a1, a2, a3; 
+   input [1:0]       c; 
+   wire [SIZE-1:0]   zLo, zHi; 
+   yMux #(SIZE) lo(zLo, a0, a1, c[0]); 
+   yMux #(SIZE) hi(zHi, a2, a3, c[0]); 
+   yMux #(SIZE) final(z, zLo, zHi, c[1]); 
+endmodule // yMux4to1
+
+module yMux8to1(z, a0,a1,a2,a3, a4, a5, a6, a7, c); 
+   parameter SIZE = 2; 
+   output [SIZE-1:0] z; 
+   input [SIZE-1:0]  a0, a1, a2, a3, a4, a5, a6, a7; 
+   input [2:0]       c; 
+   wire [SIZE-1:0]   zLo, zHi; 
+   yMux4to1 #(SIZE) lo(zLo, a0, a1, a2, a3, c[1:0]); 
+   yMux4to1 #(SIZE) hi(zHi, a4, a5, a6, a7, c[1:0]); 
+   yMux #(SIZE) final(z, zLo, zHi, c[2]); 
+endmodule // yMux4to1
+
+
+module yAdder1(z, cout, a, b, cin); 
+   output z, cout; 
+   input  a, b, cin; 
+   xor left_xor(tmp, a, b); 
+   xor right_xor(z, cin, tmp); 
+   and left_and(outL, a, b); 
+   and right_and(outR, tmp, cin); 
+   or my_or(cout, outR, outL); 
+endmodule // yAdder1
+
+
+module yAdder(s, cout, a, b, cin);
+   parameter SIZE = 2;
+   output [SIZE-1:0] s; 
+   output        cout; 
+   input [SIZE-1:0]  a, b; 
+   input         cin; 
+   wire [SIZE-1:0]       in, out; 
+   yAdder1 mine[SIZE-1:0](s, out, a, b, in); 
+   assign {cout,in} = {out,cin};
+endmodule // yAdder
+
+module cntr(val, Z, init, ctl, clk, reset);
+   parameter BITS=4;
+   output [BITS-1:0] val;
+   output 	     Z;
+   input [BITS-1:0]  init;
+   input [1:0] 	     ctl;
+   input 	     clk, reset;
+   wire [BITS-1:0]   muxout, addout;
+   wire 	     uncon;	// unconnected
+   
+   rregister #(BITS) cntrreg(val, muxout, clk, 1'b1, reset);
+   yMux4to1 #(BITS)  cntrmux(muxout, {BITS{1'b0}}, init, val, addout, ctl);
+   yAdder #(BITS) cntradd(addout, uncon, val, {BITS{1'b1}}, 1'b0);
+   assign Z = !val; 		// or Z = ~(|val)
+endmodule // cntr
+
+module compar2(GR, EQ, a, b);
+   output GR, EQ;
+   input [1:0] a, b;
+
+   wire [1:0] Gr, Eq;
+
+   assign Gr = a & ~b;
+   assign Eq = a&b | ~a&~b;
+
+   assign GR = Gr[1] | Eq[1]&Gr[0];
+   assign EQ = Eq[1]&Eq[0];
+endmodule // compar2
+
+module compar4(GR, EQ, a, b);
+   output GR, EQ;
+   input [3:0] a, b;
+
+   wire [1:0] Gr, Eq;
+
+   compar2 c2[1:0](Gr, Eq, a, b);
+   assign GR = Gr[1] | Eq[1]&Gr[0];
+   assign EQ = &Eq;
+endmodule // compar4
+
+module rcompar4alt(GR, EQ, a, b, clk, enable, rst);
+   output reg  GR, EQ;
+   input [3:0] a, b;
+   input       clk, enable, rst;
+   wire        tGR, tEQ;
+   
+   compar4 c(tGR, tEQ, a, b);
+   always @(posedge clk)
+     if (enable) {GR, EQ} = {tGR, tEQ};
+   always @(posedge rst)
+     {GR, EQ} = 2'b0;
+endmodule // rcompar4
+
+module rcompar4(GR, EQ, a, b, clk, enable, rst);
+   output      GR, EQ;
+   input [3:0] a, b;
+   input       clk, enable, rst;
+   wire        tGR, tEQ;
+   
+   compar4 c(tGR, tEQ, a, b);
+   rregister #(2)rr({GR,EQ},{tGR,tEQ}, clk, enable, rst);
+endmodule // rcompar4alt
+
+module rcompar8(GR, EQ, a, b, clk, enable, rst);
+   output reg  GR, EQ;
+   input [7:0] a, b;
+   input       clk, enable, rst;
+   wire [1:0]  Gr, Eq;
+   wire        tGR, tEQ;
+   
+   rcompar4 c4[1:0](Gr, Eq, a, b, clk, enable, rst);
+   assign tGR = Gr[1] | Eq[1]&Gr[0];
+   assign tEQ = Eq[1]&Eq[0];
+   always @(posedge clk)
+     if (enable) {GR, EQ} = {tGR, tEQ};
+   always @(posedge rst)
+     {GR, EQ} = 2'b0;
+endmodule // rcompar8
+
+module testbench;
+   reg  [7:0]  a4, b4;
+   wire        GR, EQ;
+   reg 	       expGR, expEQ;
+   integer    i, j;
+   reg 	      clk, rst, enbl;
+
+   rcompar8 test4(GR, EQ, a4, b4, clk, enbl, rst);
+
+   initial begin
+      rst = 0;
+      #1 clk = 0;
+      enbl= 1;
+      rst = 1;
+      #1 rst = 1;
+      #1 rst = 1;
+      repeat(300) begin
+	 i    = $random & ((1<<8)-1);
+	 j    = $random & ((1<<8)-1);
+	 a4   = i;
+	 b4   = j;
+	 expGR= (i>j);
+	 expEQ= (i==j);
+	 #1 clk = 1;
+	 #1 clk = 0;
+	 #1 $display("a: %b, b: %b, GR: %b%b, EQ: %b%b",
+		     a4,b4,GR,expGR,EQ,expEQ);
+      end
+      $finish;
+   end // initial begin
+endmodule // testbench
